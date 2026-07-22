@@ -1,5 +1,4 @@
-//===- KokkosPipelines.cpp - Pipelines using the Kokkos dialect for sparse and
-//dense tensors) -===//
+//===- KokkosPipelines.cpp - Pipelines using the Kokkos dialect for sparse and dense tensors) -===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,10 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "lapis/Dialect/Kokkos/IR/KokkosDialect.h"
-#include "lapis/Dialect/Kokkos/Pipelines/Passes.h"
-#include "lapis/Dialect/Kokkos/Transforms/Passes.h"
 #include "lapis/LAPIS_config.h"
+#include "lapis/Dialect/Kokkos/Pipelines/Passes.h"
 #include "lapis/Transform/AlgebraicKernelFusion.h"
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
@@ -22,6 +19,8 @@
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
 #include "mlir/Dialect/SparseTensor/Transforms/Passes.h"
+#include "lapis/Dialect/Kokkos/IR/KokkosDialect.h"
+#include "lapis/Dialect/Kokkos/Transforms/Passes.h"
 #ifdef LAPIS_ENABLE_PART_TENSOR
 #include "lapis/Dialect/PartTensor/Transforms/Passes.h"
 #endif
@@ -42,7 +41,7 @@ using namespace mlir::kokkos;
 //===----------------------------------------------------------------------===//
 
 void mlir::kokkos::buildSparseKokkosCompiler(
-    OpPassManager &pm, const LapisCompilerOptions &options) {
+    OpPassManager &pm, const LapisCompilerOptions& options) {
   bool enableRuntimeLib = !options.decompose;
 
   // Fold linalg.transpose on constant tensors
@@ -61,14 +60,14 @@ void mlir::kokkos::buildSparseKokkosCompiler(
     pm.addPass(createAlgebraicKernelFusionPass());
 
   // Remove compile-time unit extent dimensions from linalg ops.
-  // For example, a 3D loop over (N, M, 1) will be rewritten to 2D loop over (N,
-  // M). This does not affect tensor types, at least in function
-  // parameter/return types, so it is transparent to any caller.
+  // For example, a 3D loop over (N, M, 1) will be rewritten to 2D loop over (N, M).
+  // This does not affect tensor types, at least in function parameter/return types,
+  // so it is transparent to any caller.
 
   // NOTE BMK: this pass is buggy; see LAPIS issue #69
-  // pm.addPass(createLinalgFoldUnitExtentDimsPass());
+  //pm.addPass(createLinalgFoldUnitExtentDimsPass());
 
-  if (options.decompose) {
+  if(options.decompose) {
     pm.addPass(createPreSparsificationRewritePass());
   }
 
@@ -77,28 +76,30 @@ void mlir::kokkos::buildSparseKokkosCompiler(
   // destination-passing style, the output won't.
   // See https://github.com/llvm/llvm-project/issues/73745
   // Code for it says it's essentially deprecated anyway.
-  // pm.addNestedPass<func::FuncOp>(createLinalgElementwiseOpFusionPass());
+  //pm.addNestedPass<func::FuncOp>(createLinalgElementwiseOpFusionPass());
 
   pm.addPass(createConvertShapeToStandardPass());
 
   // Set up options for sparsification.
-  // The only option exposed by LapisCompilerOptions is the parallelization
-  // strategy.
+  // The only option exposed by LapisCompilerOptions is the parallelization strategy.
   // TODO: enableRuntimeLibrary = false when decompose = true?
   SparsificationOptions sparseOptions(
-      options.parallelization, mlir::SparseEmitStrategy::kFunctional,
+      options.parallelization,
+      mlir::SparseEmitStrategy::kFunctional,
       /* enableRuntimeLibrary*/ enableRuntimeLib);
 
   // Sparsification and bufferization mini-pipeline.
   pm.addPass(createSparsificationAndBufferizationPass(
-      getBufferizationOptionsForSparsification(false), sparseOptions,
-      /* createSparseDeallocs */ false,
-      /* enableRuntimeLibrary */ enableRuntimeLib,
-      /* enableBufferInitialization */ false,
-      /* vectorLength */ 0,
-      /* enableVLAVectorization */ false,
-      /* enableSIMDIndex32 */ false,
-      /* enableGPULibgen */ false, sparseOptions.sparseEmitStrategy));
+        getBufferizationOptionsForSparsification(false),
+        sparseOptions,
+        /* createSparseDeallocs */ false,
+        /* enableRuntimeLibrary */ enableRuntimeLib,
+        /* enableBufferInitialization */ false,
+        /* vectorLength */ 0,
+        /* enableVLAVectorization */ false,
+        /* enableSIMDIndex32 */ false,
+        /* enableGPULibgen */ false,
+        sparseOptions.sparseEmitStrategy));
 
   // Storage specifier lowering and bufferization wrap-up.
   pm.addPass(createStorageSpecifierToLLVMPass());
@@ -106,39 +107,31 @@ void mlir::kokkos::buildSparseKokkosCompiler(
   pm.addNestedPass<func::FuncOp>(memref::createExpandReallocPass());
 
 #ifdef LAPIS_HAS_TORCH_MLIR
-  pm.addNestedPass<func::FuncOp>(
-      torch::RefBackend::createGeneralizeTensorPadPass());
-  pm.addNestedPass<func::FuncOp>(
-      torch::RefBackend::createGeneralizeTensorConcatPass());
-  pm.addNestedPass<func::FuncOp>(
-      torch::TMTensor::createTMTensorBufferizePass());
+  pm.addNestedPass<func::FuncOp>(torch::RefBackend::createGeneralizeTensorPadPass());
+  pm.addNestedPass<func::FuncOp>(torch::RefBackend::createGeneralizeTensorConcatPass());
+  pm.addNestedPass<func::FuncOp>(torch::TMTensor::createTMTensorBufferizePass());
 #endif
 
-  // All one-shot bufferization options are copied from the TM linalg-on-tensors
-  // pipeline
+  // All one-shot bufferization options are copied from the TM linalg-on-tensors pipeline
   bufferization::OneShotBufferizationOptions oneShotBuffOptions;
   oneShotBuffOptions.copyBeforeWrite = true;
   oneShotBuffOptions.bufferizeFunctionBoundaries = true;
-  oneShotBuffOptions.setFunctionBoundaryTypeConversion(
-      bufferization::LayoutMapOption::IdentityLayoutMap);
+  oneShotBuffOptions.setFunctionBoundaryTypeConversion(bufferization::LayoutMapOption::IdentityLayoutMap);
   pm.addPass(createOneShotBufferizePass(oneShotBuffOptions));
 
 #ifdef LAPIS_HAS_TORCH_MLIR
   pm.addPass(torch::RefBackend::createMLProgramBufferizePass());
 #endif
 
-  pm.addNestedPass<func::FuncOp>(
-      bufferization::createFinalizingBufferizePass());
-  // pm.addNestedPass<func::FuncOp>(bufferization::createBufferDeallocationPass());
+  pm.addNestedPass<func::FuncOp>(bufferization::createFinalizingBufferizePass());
+  //pm.addNestedPass<func::FuncOp>(bufferization::createBufferDeallocationPass());
 
-  // Inline again to eliminate shim functions generated by pre-sparsification
-  // rewrite
+  // Inline again to eliminate shim functions generated by pre-sparsification rewrite
   pm.addPass(createInlinerPass());
 
   if (options.algebraicKernelFusion) {
-    // Algebraically selected contractions remain marked through bufferization.
-    // Outline them only after the last general inliner so the kernel boundary
-    // is preserved for loop lowering and Kokkos translation.
+    // Outline after the last general inliner so the selected kernel boundary
+    // survives loop lowering and Kokkos translation.
     pm.addPass(createOutlineAlgebraicKernelsPass());
   }
 
@@ -146,9 +139,8 @@ void mlir::kokkos::buildSparseKokkosCompiler(
   pm.addNestedPass<func::FuncOp>(torch::TMTensor::createTMTensorToLoopsPass());
 #endif
 
-  // This is the LAPIS custom pass to lower dense linalg ops with parallel
-  // reductions, but it does not work in certain uncommon cases (multiple
-  // results with reductions)
+  // This is the LAPIS custom pass to lower dense linalg ops with parallel reductions,
+  // but it does not work in certain uncommon cases (multiple results with reductions)
   pm.addNestedPass<func::FuncOp>(createDenseLinalgToParallelLoopsPass());
   // The built-in lowering will take care of any remaining linalg ops
   pm.addNestedPass<func::FuncOp>(createConvertLinalgToParallelLoopsPass());
@@ -157,28 +149,24 @@ void mlir::kokkos::buildSparseKokkosCompiler(
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createLowerAffinePass());
 
-  if (options.algebraicKernelFusion) {
-    // Fuse only the parallel domains inside kernels selected and outlined by
-    // the algebraic layer, then scalar-forward eligible private intermediates.
-    // Unmarked code remains under the standard LAPIS policy.
+  if (options.algebraicKernelFusion)
     pm.addPass(createFuseAlgebraicKernelLoopsPass());
-  }
 
   pm.addNestedPass<func::FuncOp>(createConvertComplexToStandardPass());
   // Ensure all casts are realized.
   pm.addPass(createReconcileUnrealizedCastsPass());
 
-  // pm.addPass(createKokkosMdrangeIterationPass());
+  //pm.addPass(createKokkosMdrangeIterationPass());
 
   // Finally, lower scf/memref to kokkos
   pm.addPass(createParallelUnitStepPass());
   pm.addPass(createKokkosLoopMappingPass());
-  // pm.addPass(createKokkosMemorySpaceAssignmentPass());
+  //pm.addPass(createKokkosMemorySpaceAssignmentPass());
   pm.addPass(createKokkosDualViewManagementPass());
 }
 
 void mlir::kokkos::buildSparseKokkosCompilerPreAD(
-    OpPassManager &pm, const LapisCompilerOptions &options) {
+    OpPassManager &pm, const LapisCompilerOptions& options) {
   bool enableRuntimeLib = !options.decompose;
 
   // Fold linalg.transpose on constant tensors
@@ -194,14 +182,14 @@ void mlir::kokkos::buildSparseKokkosCompilerPreAD(
   pm.addNestedPass<func::FuncOp>(createLinalgGeneralizeNamedOpsPass());
 
   // Remove compile-time unit extent dimensions from linalg ops.
-  // For example, a 3D loop over (N, M, 1) will be rewritten to 2D loop over (N,
-  // M). This does not affect tensor types, at least in function
-  // parameter/return types, so it is transparent to any caller.
+  // For example, a 3D loop over (N, M, 1) will be rewritten to 2D loop over (N, M).
+  // This does not affect tensor types, at least in function parameter/return types,
+  // so it is transparent to any caller.
 
   // NOTE BMK: this pass is buggy; see LAPIS issue #69
-  // pm.addPass(createLinalgFoldUnitExtentDimsPass());
+  //pm.addPass(createLinalgFoldUnitExtentDimsPass());
 
-  if (options.decompose) {
+  if(options.decompose) {
     pm.addPass(createPreSparsificationRewritePass());
   }
 
@@ -210,28 +198,30 @@ void mlir::kokkos::buildSparseKokkosCompilerPreAD(
   // destination-passing style, the output won't.
   // See https://github.com/llvm/llvm-project/issues/73745
   // Code for it says it's essentially deprecated anyway.
-  // pm.addNestedPass<func::FuncOp>(createLinalgElementwiseOpFusionPass());
+  //pm.addNestedPass<func::FuncOp>(createLinalgElementwiseOpFusionPass());
 
   pm.addPass(createConvertShapeToStandardPass());
 
   // Set up options for sparsification.
-  // The only option exposed by LapisCompilerOptions is the parallelization
-  // strategy.
+  // The only option exposed by LapisCompilerOptions is the parallelization strategy.
   // TODO: enableRuntimeLibrary = false when decompose = true?
   SparsificationOptions sparseOptions(
-      options.parallelization, mlir::SparseEmitStrategy::kFunctional,
+      options.parallelization,
+      mlir::SparseEmitStrategy::kFunctional,
       /* enableRuntimeLibrary*/ enableRuntimeLib);
 
   // Sparsification and bufferization mini-pipeline.
   pm.addPass(createSparsificationAndBufferizationPass(
-      getBufferizationOptionsForSparsification(false), sparseOptions,
-      /* createSparseDeallocs */ false,
-      /* enableRuntimeLibrary */ enableRuntimeLib,
-      /* enableBufferInitialization */ false,
-      /* vectorLength */ 0,
-      /* enableVLAVectorization */ false,
-      /* enableSIMDIndex32 */ false,
-      /* enableGPULibgen */ false, sparseOptions.sparseEmitStrategy));
+        getBufferizationOptionsForSparsification(false),
+        sparseOptions,
+        /* createSparseDeallocs */ false,
+        /* enableRuntimeLibrary */ enableRuntimeLib,
+        /* enableBufferInitialization */ false,
+        /* vectorLength */ 0,
+        /* enableVLAVectorization */ false,
+        /* enableSIMDIndex32 */ false,
+        /* enableGPULibgen */ false,
+        sparseOptions.sparseEmitStrategy));
 
   // Storage specifier lowering and bufferization wrap-up.
   pm.addPass(createStorageSpecifierToLLVMPass());
@@ -239,42 +229,34 @@ void mlir::kokkos::buildSparseKokkosCompilerPreAD(
   pm.addNestedPass<func::FuncOp>(memref::createExpandReallocPass());
 
 #ifdef LAPIS_HAS_TORCH_MLIR
-  pm.addNestedPass<func::FuncOp>(
-      torch::RefBackend::createGeneralizeTensorPadPass());
-  pm.addNestedPass<func::FuncOp>(
-      torch::RefBackend::createGeneralizeTensorConcatPass());
-  pm.addNestedPass<func::FuncOp>(
-      torch::TMTensor::createTMTensorBufferizePass());
+  pm.addNestedPass<func::FuncOp>(torch::RefBackend::createGeneralizeTensorPadPass());
+  pm.addNestedPass<func::FuncOp>(torch::RefBackend::createGeneralizeTensorConcatPass());
+  pm.addNestedPass<func::FuncOp>(torch::TMTensor::createTMTensorBufferizePass());
 #endif
 
-  // All one-shot bufferization options are copied from the TM linalg-on-tensors
-  // pipeline
+  // All one-shot bufferization options are copied from the TM linalg-on-tensors pipeline
   bufferization::OneShotBufferizationOptions oneShotBuffOptions;
   oneShotBuffOptions.copyBeforeWrite = true;
   oneShotBuffOptions.bufferizeFunctionBoundaries = true;
-  oneShotBuffOptions.setFunctionBoundaryTypeConversion(
-      bufferization::LayoutMapOption::IdentityLayoutMap);
+  oneShotBuffOptions.setFunctionBoundaryTypeConversion(bufferization::LayoutMapOption::IdentityLayoutMap);
   pm.addPass(createOneShotBufferizePass(oneShotBuffOptions));
 
 #ifdef LAPIS_HAS_TORCH_MLIR
   pm.addPass(torch::RefBackend::createMLProgramBufferizePass());
 #endif
 
-  pm.addNestedPass<func::FuncOp>(
-      bufferization::createFinalizingBufferizePass());
-  // pm.addNestedPass<func::FuncOp>(bufferization::createBufferDeallocationPass());
+  pm.addNestedPass<func::FuncOp>(bufferization::createFinalizingBufferizePass());
+  //pm.addNestedPass<func::FuncOp>(bufferization::createBufferDeallocationPass());
 
-  // Inline again to eliminate shim functions generated by pre-sparsification
-  // rewrite
+  // Inline again to eliminate shim functions generated by pre-sparsification rewrite
   pm.addPass(createInlinerPass());
 
 #ifdef LAPIS_HAS_TORCH_MLIR
   pm.addNestedPass<func::FuncOp>(torch::TMTensor::createTMTensorToLoopsPass());
 #endif
 
-  // This is the LAPIS custom pass to lower dense linalg ops with parallel
-  // reductions, but it does not work in certain uncommon cases (multiple
-  // results with reductions)
+  // This is the LAPIS custom pass to lower dense linalg ops with parallel reductions,
+  // but it does not work in certain uncommon cases (multiple results with reductions)
   pm.addNestedPass<func::FuncOp>(createDenseLinalgToParallelLoopsPass());
   // The built-in lowering will take care of any remaining linalg ops
   pm.addNestedPass<func::FuncOp>(createConvertLinalgToParallelLoopsPass());
@@ -288,18 +270,18 @@ void mlir::kokkos::buildSparseKokkosCompilerPreAD(
   pm.addPass(createReconcileUnrealizedCastsPass());
 }
 
-void mlir::kokkos::buildSparseKokkosCompilerPostAD(OpPassManager &pm) {
-  // pm.addPass(createKokkosMdrangeIterationPass());
+void mlir::kokkos::buildSparseKokkosCompilerPostAD(
+    OpPassManager &pm) {
+  //pm.addPass(createKokkosMdrangeIterationPass());
 
   // Finally, lower scf/memref to kokkos
   pm.addPass(createParallelUnitStepPass());
   pm.addPass(createKokkosLoopMappingPass());
-  // pm.addPass(createKokkosMemorySpaceAssignmentPass());
+  //pm.addPass(createKokkosMemorySpaceAssignmentPass());
   pm.addPass(createKokkosDualViewManagementPass());
 }
 
-void mlir::kokkos::buildTeamLevelKokkosCompiler(
-    OpPassManager &pm, const TeamLevelCompilerOptions & /*options*/) {
+void mlir::kokkos::buildTeamLevelKokkosCompiler(OpPassManager &pm, const TeamLevelCompilerOptions& /*options*/) {
   // Fold linalg.transpose on constant tensors
   pm.addPass(::mlir::createTransposeConstantFoldPass());
 
@@ -313,8 +295,7 @@ void mlir::kokkos::buildTeamLevelKokkosCompiler(
   pm.addPass(createConvertShapeToStandardPass());
 
   // Set up options for sparsification.
-  // The only option exposed by LapisCompilerOptions is the parallelization
-  // strategy.
+  // The only option exposed by LapisCompilerOptions is the parallelization strategy.
   // TODO: enableRuntimeLibrary = false when decompose = true?
   SparsificationOptions sparseOptions(
       mlir::SparseParallelizationStrategy::kAnyStorageAnyLoop,
@@ -323,14 +304,16 @@ void mlir::kokkos::buildTeamLevelKokkosCompiler(
 
   // Sparsification and bufferization mini-pipeline.
   pm.addPass(createSparsificationAndBufferizationPass(
-      getBufferizationOptionsForSparsification(false), sparseOptions,
-      /* createSparseDeallocs */ false,
-      /* enableRuntimeLibrary */ false,
-      /* enableBufferInitialization */ false,
-      /* vectorLength */ 0,
-      /* enableVLAVectorization */ false,
-      /* enableSIMDIndex32 */ false,
-      /* enableGPULibgen */ false, mlir::SparseEmitStrategy::kFunctional));
+        getBufferizationOptionsForSparsification(false),
+        sparseOptions,
+        /* createSparseDeallocs */ false,
+        /* enableRuntimeLibrary */ false,
+        /* enableBufferInitialization */ false,
+        /* vectorLength */ 0,
+        /* enableVLAVectorization */ false,
+        /* enableSIMDIndex32 */ false,
+        /* enableGPULibgen */ false,
+        mlir::SparseEmitStrategy::kFunctional));
 
   // Storage specifier lowering and bufferization wrap-up.
   pm.addPass(createStorageSpecifierToLLVMPass());
@@ -338,42 +321,34 @@ void mlir::kokkos::buildTeamLevelKokkosCompiler(
   pm.addNestedPass<func::FuncOp>(memref::createExpandReallocPass());
 
 #ifdef LAPIS_HAS_TORCH_MLIR
-  pm.addNestedPass<func::FuncOp>(
-      torch::RefBackend::createGeneralizeTensorPadPass());
-  pm.addNestedPass<func::FuncOp>(
-      torch::RefBackend::createGeneralizeTensorConcatPass());
-  pm.addNestedPass<func::FuncOp>(
-      torch::TMTensor::createTMTensorBufferizePass());
+  pm.addNestedPass<func::FuncOp>(torch::RefBackend::createGeneralizeTensorPadPass());
+  pm.addNestedPass<func::FuncOp>(torch::RefBackend::createGeneralizeTensorConcatPass());
+  pm.addNestedPass<func::FuncOp>(torch::TMTensor::createTMTensorBufferizePass());
 #endif
 
-  // All one-shot bufferization options are copied from the TM linalg-on-tensors
-  // pipeline
+  // All one-shot bufferization options are copied from the TM linalg-on-tensors pipeline
   bufferization::OneShotBufferizationOptions oneShotBuffOptions;
   oneShotBuffOptions.copyBeforeWrite = true;
   oneShotBuffOptions.bufferizeFunctionBoundaries = true;
-  oneShotBuffOptions.setFunctionBoundaryTypeConversion(
-      bufferization::LayoutMapOption::IdentityLayoutMap);
+  oneShotBuffOptions.setFunctionBoundaryTypeConversion(bufferization::LayoutMapOption::IdentityLayoutMap);
   pm.addPass(createOneShotBufferizePass(oneShotBuffOptions));
 
 #ifdef LAPIS_HAS_TORCH_MLIR
   pm.addPass(torch::RefBackend::createMLProgramBufferizePass());
 #endif
 
-  pm.addNestedPass<func::FuncOp>(
-      bufferization::createFinalizingBufferizePass());
-  // pm.addNestedPass<func::FuncOp>(bufferization::createBufferDeallocationPass());
+  pm.addNestedPass<func::FuncOp>(bufferization::createFinalizingBufferizePass());
+  //pm.addNestedPass<func::FuncOp>(bufferization::createBufferDeallocationPass());
 
-  // Inline again to eliminate shim functions generated by pre-sparsification
-  // rewrite
+  // Inline again to eliminate shim functions generated by pre-sparsification rewrite
   pm.addPass(createInlinerPass());
 
 #ifdef LAPIS_HAS_TORCH_MLIR
   pm.addNestedPass<func::FuncOp>(torch::TMTensor::createTMTensorToLoopsPass());
 #endif
 
-  // This is the LAPIS custom pass to lower dense linalg ops with parallel
-  // reductions, but it does not work in certain uncommon cases (multiple
-  // results with reductions)
+  // This is the LAPIS custom pass to lower dense linalg ops with parallel reductions,
+  // but it does not work in certain uncommon cases (multiple results with reductions)
   pm.addNestedPass<func::FuncOp>(createDenseLinalgToParallelLoopsPass());
   // The built-in lowering will take care of any remaining linalg ops
   pm.addNestedPass<func::FuncOp>(createConvertLinalgToParallelLoopsPass());
@@ -404,15 +379,13 @@ void mlir::kokkos::registerKokkosPipelines() {
   PassPipelineRegistration<LapisCompilerOptions>(
       "sparse-compiler-kokkos",
       "The standard pipeline for taking sparsity-agnostic IR using the"
-      " sparse-tensor type, and lowering it to dialects compatible with the "
-      "Kokkos emitter",
+      " sparse-tensor type, and lowering it to dialects compatible with the Kokkos emitter",
       buildSparseKokkosCompiler);
 
   PassPipelineRegistration<LapisCompilerOptions>(
       "sparse-compiler-kokkos-pre-ad",
       "The standard pipeline for taking sparsity-agnostic IR using the"
-      " sparse-tensor type, and lowering it to dialects compatible with Enzyme "
-      "AD",
+      " sparse-tensor type, and lowering it to dialects compatible with Enzyme AD",
       buildSparseKokkosCompilerPreAD);
 
   PassPipelineRegistration<>(
