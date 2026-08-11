@@ -1,0 +1,17 @@
+#!/bin/bash
+
+WORKSPACE=$(pwd)
+BENCHMARK_BACKEND=CUDA
+
+cmake -B ${WORKSPACE}/lapisBuild -S . -G Ninja \
+  -DLLVM_TARGETS_TO_BUILD="Native" \
+  -DLLVM_INCLUDE_TESTS=OFF \
+  -DBUILD_TESTING=OFF \
+  -DMLIR_INCLUDE_TESTS=OFF \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="${WORKSPACE}/dependencies/llvmInstall" \
+  -DMLIR_ENABLE_BINDINGS_PYTHON=OFF \
+  -DLAPIS_ENABLE_PART_TENSOR=OFF \
+  -DLAPIS_BENCHMARK_BACKEND=${BENCHMARK_BACKEND} \
+  -DLAPIS_BENCHMARK_KOKKOS_ROOT=${HOME}/Kokkos/kokkos/installation \
+  -DLAPIS_BENCHMARK_SUPPORT_LIB=${WORKSPACE}/dependencies/llvmInstall/lib/libmlir_c_runner_utils.so

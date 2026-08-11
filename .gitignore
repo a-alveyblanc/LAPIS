@@ -98,6 +98,9 @@ mlir_venv/
 externals/pytorch/
 libtorch*
 
+lapisBuild/
+dependencies/
+
 /build/
 __pycache__
 *.pyc
