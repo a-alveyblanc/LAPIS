@@ -1,13 +1,13 @@
 #!/bin/bash
 
 WORKSPACE=$(pwd)
-BENCHMARK_BACKEND=hip
+BENCHMARK_BACKEND=cuda
+BENCHMARK_CXX_COMPILER=hipcc
 
 rm -rf lapisBuild
 mkdir lapisBuild
 
 cmake -B ${WORKSPACE}/lapisBuild -S . -G Ninja \
-  -DCMAKE_CXX_COMPILER=hipcc \
   -DLLVM_TARGETS_TO_BUILD="Native" \
   -DLLVM_INCLUDE_TESTS=OFF \
   -DBUILD_TESTING=OFF \

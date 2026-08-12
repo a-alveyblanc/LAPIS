@@ -1,9 +1,9 @@
 #!/bin/bash
 
 WORKSPACE=$(pwd)
-BENCHMARK_BACKEND=hip
-BENCHMARK_LABEL=mi250
-BENCHMARK_CXX=hipcc
+BENCHMARK_BACKEND=cuda
+BENCHMARK_LABEL=h100
+BENCHMARK_CXX=${HOME}/Kokkos/kokkos/bin/nvcc_wrapper
 
 # OMP_PROC_BIND=spread
 # OMP_PLACES=threads
