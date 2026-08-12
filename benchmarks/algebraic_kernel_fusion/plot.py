@@ -50,8 +50,13 @@ COLORS = (
 class Configuration:
     label: str
     backend: str
+    cmake_cxx_compiler_id: str
+    cmake_cxx_compiler_version: str
+    cmake_cxx_flags_release: str
     kokkos_version: str
     kokkos_arch: str
+    kokkos_cxx_compiler_id: str
+    kokkos_cxx_compiler_version: str
     lapis_revision: str
     runtime_environment: str
     notes: str
@@ -184,8 +189,23 @@ def load_paired_results(paths):
                 configuration = Configuration(
                     label=label,
                     backend=get_field(row, "backend", "unknown"),
+                    cmake_cxx_compiler_id=get_field(
+                        row, "cmake_cxx_compiler_id", "unknown"
+                    ),
+                    cmake_cxx_compiler_version=get_field(
+                        row, "cmake_cxx_compiler_version", "unknown"
+                    ),
+                    cmake_cxx_flags_release=get_field(
+                        row, "cmake_cxx_flags_release", "unknown"
+                    ),
                     kokkos_version=get_field(row, "kokkos_version", "unknown"),
                     kokkos_arch=get_field(row, "kokkos_arch", "unknown"),
+                    kokkos_cxx_compiler_id=get_field(
+                        row, "kokkos_cxx_compiler_id", "unknown"
+                    ),
+                    kokkos_cxx_compiler_version=get_field(
+                        row, "kokkos_cxx_compiler_version", "unknown"
+                    ),
                     lapis_revision=get_field(row, "lapis_revision", "unknown"),
                     runtime_environment=get_field(row, "runtime_environment", "{}"),
                     notes=get_field(row, "notes", ""),

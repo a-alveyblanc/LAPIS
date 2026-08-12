@@ -8,8 +8,9 @@ This harness builds two versions of each input MLIR module:
 
 Both variants use the same native C++ driver, deterministic inputs, correctness
 check, warmup count, timed iteration count, and a `Kokkos::fence` around every
-sample. The benchmark reports minimum, median, and mean wall-clock time. The
-summary speedup is the baseline median divided by the optimized median.
+sample. The benchmark reports minimum, maximum, median, and mean wall-clock
+time. The summary speedup is the baseline median divided by the optimized
+median.
 
 The compiled harness lowers every selected case, creates one CMake project, and
 builds all baseline/optimized executables in a single configuration. The Kokkos
@@ -74,6 +75,11 @@ corresponding defaults. Command-line arguments override them:
 must be compatible with that Kokkos installation. Use `--cxx` to avoid relying
 on CMake's ambient compiler selection. Extra configuration options may be
 passed with repeated `--cmake-arg=...` arguments.
+
+Generated benchmarks use CMake's `Release` configuration. With the supported
+GCC- and Clang-family toolchains this defaults to `-O3 -DNDEBUG`; the runner
+records the actual `CMAKE_CXX_FLAGS_RELEASE` value in each CSV row so overrides
+remain visible.
 
 Build products are written under `benchmarks/algebraic_kernel_fusion/build`,
 which is ignored by the repository's existing `build*/` rule.
@@ -156,11 +162,15 @@ ONEAPI_DEVICE_SELECTOR=level_zero:gpu \
 ```
 
 CUDA, HIP, SYCL, OpenMP, and device-selection environment variables are passed
-through unchanged. The result CSV records the runtime execution-space name,
-Kokkos version/devices/architecture, CMake and Kokkos compilers, LAPIS Git
-revision, host platform, run label, and relevant runtime environment. Use
-`--notes` for allocation-specific details and `--append-output` to add runs to
-an existing CSV with the same schema.
+through unchanged. The result CSV records minimum, maximum, median, and mean
+times; compiler IDs, versions, and Release flags; the runtime execution-space
+name; Kokkos version/devices/architecture; LAPIS Git revision; run label; and
+the relevant runtime environment. Hostname, operating-system version, and host
+architecture are not recorded. Use `--notes` for allocation-specific details
+and `--append-output` to add runs to an existing CSV with the same schema.
+
+CSVs produced before `maximum_seconds` was added remain readable by `plot.py`,
+but cannot be appended to with the new runner because their schema differs.
 
 ## Plotting
 

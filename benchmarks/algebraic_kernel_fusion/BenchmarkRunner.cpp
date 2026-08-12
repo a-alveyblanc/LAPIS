@@ -24,14 +24,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
-
-#if !defined(_WIN32)
-#include <sys/utsname.h>
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -102,6 +96,7 @@ struct Result {
   std::size_t warmup;
   std::size_t iterations;
   double minimumSeconds;
+  double maximumSeconds;
   double medianSeconds;
   double meanSeconds;
   double checksum;
@@ -110,20 +105,15 @@ struct Result {
 struct RunMetadata {
   std::string timestampUtc;
   std::string label;
-  std::string hostname;
-  std::string operatingSystem;
-  std::string architecture;
   std::string lapisRevision;
-  std::string cmakeCxxCompiler;
   std::string cmakeCxxCompilerId;
   std::string cmakeCxxCompilerVersion;
+  std::string cmakeCxxFlagsRelease;
   std::string kokkosVersion;
   std::string kokkosDevices;
   std::string kokkosArch;
-  std::string kokkosCxxCompiler;
   std::string kokkosCxxCompilerId;
   std::string kokkosCxxCompilerVersion;
-  std::string kokkosConfig;
   std::string runtimeEnvironment;
   std::string notes;
 };
@@ -600,13 +590,12 @@ void writeBuildProject(
       "  message(FATAL_ERROR \"Selected backend is not enabled in this Kokkos "
       "package: ${Kokkos_DEVICES}\")\nendif()\n"
       "file(WRITE \"${CMAKE_BINARY_DIR}/lapis-benchmark-build-metadata.txt\"\n"
-      "  \"cmake_cxx_compiler=${CMAKE_CXX_COMPILER}\\n\"\n"
       "  \"cmake_cxx_compiler_id=${CMAKE_CXX_COMPILER_ID}\\n\"\n"
       "  \"cmake_cxx_compiler_version=${CMAKE_CXX_COMPILER_VERSION}\\n\"\n"
+      "  \"cmake_cxx_flags_release=${CMAKE_CXX_FLAGS_RELEASE}\\n\"\n"
       "  \"kokkos_version=${Kokkos_VERSION}\\n\"\n"
       "  \"kokkos_devices=${Kokkos_DEVICES}\\n\"\n"
       "  \"kokkos_arch=${Kokkos_ARCH}\\n\"\n"
-      "  \"kokkos_cxx_compiler=${Kokkos_CXX_COMPILER}\\n\"\n"
       "  \"kokkos_cxx_compiler_id=${Kokkos_CXX_COMPILER_ID}\\n\"\n"
       "  \"kokkos_cxx_compiler_version=${Kokkos_CXX_COMPILER_VERSION}\\n\")\n" +
       targets.str();
@@ -713,17 +702,25 @@ Result parseResult(std::string_view output) {
   if (!resultLine)
     throw std::runtime_error("benchmark did not emit a RESULT line");
   const std::vector<std::string> fields = split(*resultLine, ',');
-  if (fields.size() != 10)
+  if (fields.size() != 11)
     throw std::runtime_error("benchmark RESULT line has the wrong field count");
-  return Result{fields[1],
+  Result result{fields[1],
                 fields[2],
                 fields[3],
                 parsePositiveCount(fields[4], "RESULT warmup"),
                 parsePositiveCount(fields[5], "RESULT iterations"),
                 parseFiniteDouble(fields[6], "minimum time", true),
-                parseFiniteDouble(fields[7], "median time", true),
-                parseFiniteDouble(fields[8], "mean time", true),
-                parseFiniteDouble(fields[9], "checksum", false)};
+                parseFiniteDouble(fields[7], "maximum time", true),
+                parseFiniteDouble(fields[8], "median time", true),
+                parseFiniteDouble(fields[9], "mean time", true),
+                parseFiniteDouble(fields[10], "checksum", false)};
+  if (result.minimumSeconds > result.medianSeconds ||
+      result.medianSeconds > result.maximumSeconds ||
+      result.minimumSeconds > result.meanSeconds ||
+      result.meanSeconds > result.maximumSeconds)
+    throw std::runtime_error(
+        "benchmark RESULT timing statistics are inconsistent");
+  return result;
 }
 
 fs::path findBenchmarkExecutable(const fs::path &binaryDirectory,
@@ -826,29 +823,6 @@ std::string trim(std::string value) {
   return value;
 }
 
-std::string getHostname() {
-#if defined(_WIN32)
-  const std::string hostname = getEnvironment("COMPUTERNAME");
-  return hostname.empty() ? "unknown" : hostname;
-#else
-  std::array<char, 256> hostname{};
-  return gethostname(hostname.data(), hostname.size()) == 0 ? hostname.data()
-                                                            : "unknown";
-#endif
-}
-
-std::pair<std::string, std::string> getPlatform() {
-#if defined(_WIN32)
-  return {"Windows", getEnvironment("PROCESSOR_ARCHITECTURE")};
-#else
-  struct utsname information{};
-  if (uname(&information) != 0)
-    return {"unknown", "unknown"};
-  return {std::string(information.sysname) + "-" + information.release,
-          information.machine};
-#endif
-}
-
 std::string makeTimestamp() {
   const auto now = std::chrono::system_clock::now();
   const auto microseconds =
@@ -948,24 +922,18 @@ RunMetadata
 makeRunMetadata(const Options &options, const Runtime &runtime,
                 const std::map<std::string, std::string> &buildMetadata,
                 const fs::path &logsDirectory) {
-  auto [operatingSystem, architecture] = getPlatform();
   return RunMetadata{
       makeTimestamp(),
-      options.label.empty() ? getHostname() : options.label,
-      getHostname(),
-      operatingSystem,
-      architecture.empty() ? "unknown" : architecture,
+      options.label.empty() ? runtime.backend.cliName : options.label,
       getLapisRevision(logsDirectory),
-      metadataValue(buildMetadata, "cmake_cxx_compiler"),
       metadataValue(buildMetadata, "cmake_cxx_compiler_id"),
       metadataValue(buildMetadata, "cmake_cxx_compiler_version"),
+      metadataValue(buildMetadata, "cmake_cxx_flags_release"),
       metadataValue(buildMetadata, "kokkos_version"),
       metadataValue(buildMetadata, "kokkos_devices"),
       metadataValue(buildMetadata, "kokkos_arch"),
-      metadataValue(buildMetadata, "kokkos_cxx_compiler"),
       metadataValue(buildMetadata, "kokkos_cxx_compiler_id"),
       metadataValue(buildMetadata, "kokkos_cxx_compiler_version"),
-      runtime.kokkosConfig.string(),
       captureEnvironmentJson(),
       options.notes};
 }
@@ -975,12 +943,11 @@ void printMetadata(const RunMetadata &metadata) {
                << "  label: " << metadata.label << '\n'
                << "  LAPIS revision: " << metadata.lapisRevision << '\n'
                << "  C++ compiler: " << metadata.cmakeCxxCompilerId << ' '
-               << metadata.cmakeCxxCompilerVersion << " ("
-               << metadata.cmakeCxxCompiler << ")\n"
+               << metadata.cmakeCxxCompilerVersion << '\n'
+               << "  Release flags: " << metadata.cmakeCxxFlagsRelease << '\n'
                << "  Kokkos: " << metadata.kokkosVersion
                << "; devices=" << metadata.kokkosDevices
                << "; arch=" << metadata.kokkosArch << '\n'
-               << "  Kokkos package: " << metadata.kokkosConfig << '\n'
                << "  runtime environment: " << metadata.runtimeEnvironment
                << '\n';
 }
@@ -999,30 +966,25 @@ std::string csvEscape(std::string_view value) {
 }
 
 const std::string csvHeader =
-    "timestamp_utc,label,hostname,operating_system,architecture,lapis_revision,"
-    "cmake_cxx_compiler,cmake_cxx_compiler_id,cmake_cxx_compiler_version,"
-    "kokkos_version,kokkos_devices,kokkos_arch,kokkos_cxx_compiler,"
-    "kokkos_cxx_compiler_id,kokkos_cxx_compiler_version,kokkos_config,"
+    "timestamp_utc,label,lapis_revision,cmake_cxx_compiler_id,"
+    "cmake_cxx_compiler_version,cmake_cxx_flags_release,kokkos_version,"
+    "kokkos_devices,kokkos_arch,kokkos_cxx_compiler_id,"
+    "kokkos_cxx_compiler_version,"
     "runtime_environment,notes,case,variant,backend,warmup,iterations,"
-    "minimum_seconds,median_seconds,mean_seconds,checksum";
+    "minimum_seconds,maximum_seconds,median_seconds,mean_seconds,checksum";
 
 std::vector<std::string> metadataFields(const RunMetadata &metadata) {
   return {metadata.timestampUtc,
           metadata.label,
-          metadata.hostname,
-          metadata.operatingSystem,
-          metadata.architecture,
           metadata.lapisRevision,
-          metadata.cmakeCxxCompiler,
           metadata.cmakeCxxCompilerId,
           metadata.cmakeCxxCompilerVersion,
+          metadata.cmakeCxxFlagsRelease,
           metadata.kokkosVersion,
           metadata.kokkosDevices,
           metadata.kokkosArch,
-          metadata.kokkosCxxCompiler,
           metadata.kokkosCxxCompilerId,
           metadata.kokkosCxxCompilerVersion,
-          metadata.kokkosConfig,
           metadata.runtimeEnvironment,
           metadata.notes};
 }
@@ -1038,6 +1000,7 @@ std::string resultRow(const RunMetadata &metadata, const Result &result) {
     return output.str();
   };
   fields.insert(fields.end(), {formatDouble(result.minimumSeconds),
+                               formatDouble(result.maximumSeconds),
                                formatDouble(result.medianSeconds),
                                formatDouble(result.meanSeconds),
                                formatDouble(result.checksum)});

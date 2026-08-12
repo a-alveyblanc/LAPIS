@@ -66,6 +66,7 @@ inline Options parseOptions(int argc, char **argv) {
 
 struct Measurement {
   double minimumSeconds;
+  double maximumSeconds;
   double medianSeconds;
   double meanSeconds;
 };
@@ -94,7 +95,7 @@ Measurement measure(const Options &options, Operation &&operation) {
           : samples[samples.size() / 2];
   const double mean =
       std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
-  return Measurement{samples.front(), median, mean};
+  return Measurement{samples.front(), samples.back(), median, mean};
 }
 
 inline void printResult(std::string_view benchmark, std::string_view variant,
@@ -103,8 +104,9 @@ inline void printResult(std::string_view benchmark, std::string_view variant,
   std::cout << std::setprecision(12) << "RESULT," << benchmark << ',' << variant
             << ',' << Kokkos::DefaultExecutionSpace::name() << ','
             << options.warmup << ',' << options.iterations << ','
-            << measurement.minimumSeconds << ',' << measurement.medianSeconds
-            << ',' << measurement.meanSeconds << ',' << checksum << '\n';
+            << measurement.minimumSeconds << ',' << measurement.maximumSeconds
+            << ',' << measurement.medianSeconds << ','
+            << measurement.meanSeconds << ',' << checksum << '\n';
 }
 
 } // namespace lapis::benchmark
