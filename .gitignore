@@ -160,3 +160,8 @@ examples/mala_teamlevel/build/
 examples/mala_batch/forward_snap.hpp
 examples/mala_batch/forward_snap_lowered.mlir
 examples/mala_batch/build/
+
+# Generated maxpool team-level example outputs
+examples/maxpool_nchw_teamlevel/maxpool.cpp
+examples/maxpool_nchw_teamlevel/maxpool.hpp
+examples/maxpool_nchw_teamlevel/maxpool_lowered.mlir
