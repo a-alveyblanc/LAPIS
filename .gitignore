@@ -99,6 +99,8 @@ externals/pytorch/
 libtorch*
 
 /build/
+lapisBuild/
+dependencies/
 __pycache__
 *.pyc
 
