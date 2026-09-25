@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <iomanip>
@@ -66,6 +67,7 @@ inline Options parseOptions(int argc, char **argv) {
 
 struct Measurement {
   double minimumSeconds;
+  double maximumSeconds;
   double medianSeconds;
   double meanSeconds;
 };
@@ -83,7 +85,10 @@ Measurement measure(const Options &options, Operation &&operation) {
     Kokkos::Timer timer;
     [[maybe_unused]] auto result = operation();
     Kokkos::fence();
-    samples.push_back(timer.seconds());
+    const double seconds = timer.seconds();
+    if (!std::isfinite(seconds) || seconds <= 0.0)
+      throw std::runtime_error("invalid benchmark timing sample");
+    samples.push_back(seconds);
   }
 
   std::sort(samples.begin(), samples.end());
@@ -94,16 +99,28 @@ Measurement measure(const Options &options, Operation &&operation) {
           : samples[samples.size() / 2];
   const double mean =
       std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
-  return Measurement{samples.front(), median, mean};
+  return Measurement{samples.front(), samples.back(), median, mean};
 }
 
 inline void printResult(std::string_view benchmark, std::string_view variant,
                         const Options &options, const Measurement &measurement,
                         double checksum) {
-  std::cout << std::setprecision(12) << "RESULT," << benchmark << ',' << variant
+  if (!std::isfinite(measurement.minimumSeconds) ||
+      !std::isfinite(measurement.maximumSeconds) ||
+      !std::isfinite(measurement.medianSeconds) ||
+      !std::isfinite(measurement.meanSeconds) || !std::isfinite(checksum) ||
+      measurement.minimumSeconds <= 0.0 ||
+      measurement.minimumSeconds > measurement.maximumSeconds ||
+      measurement.medianSeconds < measurement.minimumSeconds ||
+      measurement.medianSeconds > measurement.maximumSeconds ||
+      measurement.meanSeconds < measurement.minimumSeconds ||
+      measurement.meanSeconds > measurement.maximumSeconds)
+    throw std::runtime_error("invalid benchmark measurement or checksum");
+  std::cout << std::setprecision(17) << "RESULT," << benchmark << ',' << variant
             << ',' << Kokkos::DefaultExecutionSpace::name() << ','
             << options.warmup << ',' << options.iterations << ','
-            << measurement.minimumSeconds << ',' << measurement.medianSeconds
+            << measurement.minimumSeconds << ',' << measurement.maximumSeconds
+            << ',' << measurement.medianSeconds
             << ',' << measurement.meanSeconds << ',' << checksum << '\n';
 }
 

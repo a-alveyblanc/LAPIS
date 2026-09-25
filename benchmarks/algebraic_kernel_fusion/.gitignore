@@ -1,0 +1,7 @@
+# Generated lowering and driver artifacts; retain the source cases.
+*.mlir
+*.cpp
+!/cases/*.mlir
+!/cases/*.cpp
+__pycache__/
+build*/

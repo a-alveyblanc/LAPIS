@@ -8,7 +8,7 @@ This harness builds two versions of each input MLIR module:
 
 Both variants use the same native C++ driver, deterministic inputs, correctness
 check, warmup count, timed iteration count, and a `Kokkos::fence` around every
-sample. The benchmark reports minimum, median, and mean wall-clock time. The
+sample. The benchmark reports minimum, maximum, median, and mean wall-clock time. The
 summary speedup is the baseline median divided by the optimized median.
 
 The compiled harness lowers every selected case, creates one CMake project, and
@@ -43,15 +43,29 @@ explicitly:
   --case abx --warmup 3 --iterations 20 \
   --label workstation-serial --output serial.csv
 
-# Run every discovered case and retain the raw measurements.
+# Run every discovered case and retain timing summaries in JSON.
 /path/to/lapis-build/bin/lapis-algebraic-kernel-fusion-benchmark \
   --backend serial \
   --kokkos-root /path/to/kokkos-serial \
   --cxx /path/to/compatible-c++ \
   --support-lib /path/to/libmlir_c_runner_utils.so \
   --case all --warmup 3 --iterations 20 \
-  --label workstation --output results.csv
+  --label workstation --output results/workstation.json
 ```
+
+`--output` accepts `.json` or `.csv`; collection never generates plots. JSON is
+an array of records containing the existing run metadata, case, variant, backend,
+warmup/iteration counts, minimum/maximum/median/mean seconds, and checksum.
+Counts and measurements are JSON numbers. Individual timing samples are not
+exported. The `runtime_environment` field retains its JSON-encoded string form
+from CSV. Each validated baseline/optimized pair is saved immediately, so a
+later runtime failure leaves the completed pairs available.
+
+Use distinct filenames for each machine/run, or `--append-output` to preserve
+and extend an existing file with the same schema. Without that flag, the first
+completed pair replaces previous output. JSON append validates existing records
+before replacing the file atomically. Older CSVs without `maximum_seconds`
+cannot be appended to. Without `--output`, results are printed only.
 
 `LAPIS_BENCHMARK_BACKEND`, `KOKKOS_ROOT`, `CXX`, and `SUPPORT_LIB` provide the
 corresponding defaults. Command-line arguments override them:
@@ -76,7 +90,8 @@ on CMake's ambient compiler selection. Extra configuration options may be
 passed with repeated `--cmake-arg=...` arguments.
 
 Build products are written under `benchmarks/algebraic_kernel_fusion/build`,
-which is ignored by the repository's existing `build*/` rule.
+which is ignored by `build*/`. Generated `.mlir` and `.cpp` files are ignored
+within this benchmark directory, except the source files in `cases/`.
 
 Each case consists of `cases/<name>.mlir` and `cases/<name>.cpp`. Adding a case
 does not require changing the harness: the MLIR file is discovered
@@ -156,15 +171,18 @@ ONEAPI_DEVICE_SELECTOR=level_zero:gpu \
 ```
 
 CUDA, HIP, SYCL, OpenMP, and device-selection environment variables are passed
-through unchanged. The result CSV records the runtime execution-space name,
+through unchanged. The result file records the runtime execution-space name,
 Kokkos version/devices/architecture, CMake and Kokkos compilers, LAPIS Git
 revision, host platform, run label, and relevant runtime environment. Use
 `--notes` for allocation-specific details and `--append-output` to add runs to
-an existing CSV with the same schema.
+an existing JSON or CSV file with the same schema. This runner records hostname
+and compiler/package paths; review those fields before sharing results. Record
+the LLVM/MLIR revision separately; it is not automatically captured.
 
 ## Plotting
 
-`plot.py` reads one or more result CSVs directly. It pairs baseline and
+Plotting is a separate, optional post-collection step. The current `plot.py`
+accepts CSV only, not JSON. It reads one or more result CSVs and pairs baseline and
 optimized measurements from the same run, then produces a speedup comparison
 and a baseline-versus-optimized execution-time comparison:
 
@@ -203,6 +221,22 @@ The current cases are:
 | Batched linear attention | Batched `(Q K^T) V` | Exercise batch-index liveness and backend mapping. |
 | PCG | One dense preconditioned-CG iteration | Exercise equal-work fusion selection and externally visible intermediates. |
 | Burgers | 20 SSP-RK2 steps for a 128x128 2D scalar viscous Burgers solve | Fuse three derivative primitives, RHS formation, and Euler update without materializing derivative fields. |
+
+The workload shapes match the paper:
+
+| Case | Shape | Precision |
+| --- | --- | --- |
+| ABx | M=128, K=256, N=1024 | fp32 |
+| Large ABx | M=256, K=512, N=2048 | fp32 |
+| Linear attention | query=256, key/value=1024, features=64 | fp32 |
+| Large linear attention | query=512, key/value=2048, features=64 | fp32 |
+| Batched linear attention | batch=8, query=256, key/value=1024, features=64 | fp32 |
+| PCG | N=512 | fp64 |
+| Burgers | 128x128 interior, 20 two-stage SSP-RK2 steps | fp64 |
+
+Burgers uses viscosity `0.01`, time step `0.0005`, zero Dirichlet boundaries,
+and initial condition `0.5*sin(pi*x)*sin(pi*y)` on the unit square. Its grid
+spacing is `1/129`, with centered-difference coefficients `64.5` and `16641.0`.
 
 Each timed sample is one complete generated function call. It therefore
 includes output and private-intermediate allocation, zero initialization,

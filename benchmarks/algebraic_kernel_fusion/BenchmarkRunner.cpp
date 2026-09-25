@@ -1,6 +1,8 @@
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -10,6 +12,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -102,6 +105,7 @@ struct Result {
   std::size_t warmup;
   std::size_t iterations;
   double minimumSeconds;
+  double maximumSeconds;
   double medianSeconds;
   double meanSeconds;
   double checksum;
@@ -182,8 +186,10 @@ void printHelp() {
       << "  --support-lib PATH\n"
       << "  --cmake-arg ARG      repeatable extra configure argument\n\n"
       << "Results:\n"
-      << "  --output PATH\n"
-      << "  --append-output\n"
+      << "  --output PATH        .csv or .json (JSON array of records)\n"
+      << "  --append-output      append pairs; validate existing schema first\n"
+      << "                       JSON is replaced atomically after each pair\n"
+      << "  Timings include minimum, maximum, median, and mean seconds.\n"
       << "  --label TEXT\n"
       << "  --notes TEXT\n"
       << "  --skip-if-unavailable\n";
@@ -280,6 +286,9 @@ Options parseOptions(int argc, char **argv) {
 
   if (options.appendOutput && !options.output)
     throw std::runtime_error("--append-output requires --output");
+  if (options.output && options.output->extension() != ".json" &&
+      options.output->extension() != ".csv")
+    throw std::runtime_error("--output requires a .json or .csv suffix");
   return options;
 }
 
@@ -639,7 +648,7 @@ prepareBenchmarks(const Options &options, const Runtime &runtime,
                          isWithin(*options.output, binaryDirectory) ||
                          isWithin(*options.output, logsDirectory)))
     throw std::runtime_error(
-        "result CSV must be outside runner-managed build subdirectories");
+        "result output must be outside runner-managed build subdirectories");
   resetManagedDirectory(projectDirectory);
   resetManagedDirectory(binaryDirectory);
   resetManagedDirectory(logsDirectory);
@@ -698,6 +707,20 @@ double parseFiniteDouble(std::string_view text, std::string_view field,
   }
 }
 
+void validateResult(const Result &result) {
+  if (!std::isfinite(result.minimumSeconds) ||
+      !std::isfinite(result.maximumSeconds) ||
+      !std::isfinite(result.medianSeconds) ||
+      !std::isfinite(result.meanSeconds) || !std::isfinite(result.checksum) ||
+      result.minimumSeconds <= 0.0 ||
+      result.minimumSeconds > result.maximumSeconds ||
+      result.medianSeconds < result.minimumSeconds ||
+      result.medianSeconds > result.maximumSeconds ||
+      result.meanSeconds < result.minimumSeconds ||
+      result.meanSeconds > result.maximumSeconds)
+    throw std::runtime_error("invalid benchmark timing bounds or checksum");
+}
+
 Result parseResult(std::string_view output) {
   std::optional<std::string> resultLine;
   std::istringstream lines{std::string(output)};
@@ -713,17 +736,20 @@ Result parseResult(std::string_view output) {
   if (!resultLine)
     throw std::runtime_error("benchmark did not emit a RESULT line");
   const std::vector<std::string> fields = split(*resultLine, ',');
-  if (fields.size() != 10)
+  if (fields.size() != 11)
     throw std::runtime_error("benchmark RESULT line has the wrong field count");
-  return Result{fields[1],
+  Result result{fields[1],
                 fields[2],
                 fields[3],
                 parsePositiveCount(fields[4], "RESULT warmup"),
                 parsePositiveCount(fields[5], "RESULT iterations"),
                 parseFiniteDouble(fields[6], "minimum time", true),
-                parseFiniteDouble(fields[7], "median time", true),
-                parseFiniteDouble(fields[8], "mean time", true),
-                parseFiniteDouble(fields[9], "checksum", false)};
+                parseFiniteDouble(fields[7], "maximum time", true),
+                parseFiniteDouble(fields[8], "median time", true),
+                parseFiniteDouble(fields[9], "mean time", true),
+                parseFiniteDouble(fields[10], "checksum", false)};
+  validateResult(result);
+  return result;
 }
 
 fs::path findBenchmarkExecutable(const fs::path &binaryDirectory,
@@ -1004,7 +1030,7 @@ const std::string csvHeader =
     "kokkos_version,kokkos_devices,kokkos_arch,kokkos_cxx_compiler,"
     "kokkos_cxx_compiler_id,kokkos_cxx_compiler_version,kokkos_config,"
     "runtime_environment,notes,case,variant,backend,warmup,iterations,"
-    "minimum_seconds,median_seconds,mean_seconds,checksum";
+    "minimum_seconds,maximum_seconds,median_seconds,mean_seconds,checksum";
 
 std::vector<std::string> metadataFields(const RunMetadata &metadata) {
   return {metadata.timestampUtc,
@@ -1038,6 +1064,7 @@ std::string resultRow(const RunMetadata &metadata, const Result &result) {
     return output.str();
   };
   fields.insert(fields.end(), {formatDouble(result.minimumSeconds),
+                               formatDouble(result.maximumSeconds),
                                formatDouble(result.medianSeconds),
                                formatDouble(result.meanSeconds),
                                formatDouble(result.checksum)});
@@ -1050,7 +1077,54 @@ std::string resultRow(const RunMetadata &metadata, const Result &result) {
   return row.str();
 }
 
+llvm::json::Array readJsonResults(const fs::path &path) {
+  auto parsed = llvm::json::parse(readText(path));
+  if (!parsed)
+    throw std::runtime_error("cannot append: invalid JSON: " +
+                             llvm::toString(parsed.takeError()));
+  auto *records = parsed->getAsArray();
+  if (!records)
+    throw std::runtime_error("cannot append: JSON must be an array of records");
+  const auto keys = split(csvHeader, ',');
+  for (const auto &record : *records) {
+    const auto *object = record.getAsObject();
+    if (!object || object->size() != keys.size())
+      throw std::runtime_error("cannot append: existing JSON schema differs");
+    // All fields before the two counts and five measurements are strings.
+    for (std::size_t index = 0; index < keys.size() - 7; ++index) {
+      if (!object->getString(keys[index]))
+        throw std::runtime_error("cannot append: invalid JSON field " +
+                                 keys[index]);
+    }
+    for (const char *key : {"warmup", "iterations"}) {
+      const auto *value = object->get(key);
+      const auto count = value ? value->getAsUINT64() : std::nullopt;
+      if (!count || *count == 0 ||
+          *count > std::numeric_limits<std::size_t>::max())
+        throw std::runtime_error("cannot append: invalid JSON count " +
+                                 std::string(key));
+    }
+    auto number = [&](const char *key) {
+      const auto value = object->getNumber(key);
+      if (!value || !std::isfinite(*value))
+        throw std::runtime_error("cannot append: invalid JSON number " +
+                                 std::string(key));
+      return *value;
+    };
+    validateResult(Result{"", "", "", 1, 1, number("minimum_seconds"),
+                          number("maximum_seconds"), number("median_seconds"),
+                          number("mean_seconds"), number("checksum")});
+  }
+  return std::move(*records);
+}
+
 void validateOutputSchema(const Options &options) {
+  if (options.output && options.appendOutput &&
+      options.output->extension() == ".json") {
+    if (fs::exists(*options.output))
+      readJsonResults(*options.output);
+    return;
+  }
   if (!options.output || !options.appendOutput ||
       !fs::is_regular_file(*options.output) ||
       fs::file_size(*options.output) == 0)
@@ -1072,6 +1146,57 @@ void writeResults(const Options &options, bool append,
   const fs::path outputPath = fs::absolute(*options.output);
   if (!outputPath.parent_path().empty())
     fs::create_directories(outputPath.parent_path());
+  if (outputPath.extension() == ".json") {
+    llvm::json::Array records;
+    if (append && fs::exists(outputPath))
+      records = readJsonResults(outputPath);
+    const auto keys = split(csvHeader, ',');
+    const auto fields = metadataFields(metadata);
+    for (const Result &result : results) {
+      validateResult(result);
+      llvm::json::Object record;
+      for (std::size_t index = 0; index < fields.size(); ++index)
+        record[keys[index]] = fields[index];
+      record["case"] = result.caseName;
+      record["variant"] = result.variant;
+      record["backend"] = result.backend;
+      record["warmup"] = static_cast<uint64_t>(result.warmup);
+      record["iterations"] = static_cast<uint64_t>(result.iterations);
+      record["minimum_seconds"] = result.minimumSeconds;
+      record["maximum_seconds"] = result.maximumSeconds;
+      record["median_seconds"] = result.medianSeconds;
+      record["mean_seconds"] = result.meanSeconds;
+      record["checksum"] = result.checksum;
+      records.push_back(std::move(record));
+    }
+
+    // Keep the previous complete array intact until its replacement is closed.
+    llvm::SmallString<256> temporaryPath;
+    int descriptor;
+    if (const auto error = llvm::sys::fs::createUniqueFile(
+            outputPath.string() + ".tmp-%%%%%%", descriptor, temporaryPath))
+      throw std::runtime_error("could not create JSON temporary file: " +
+                               error.message());
+    try {
+      llvm::raw_fd_ostream output(descriptor, true);
+      output << llvm::json::Value(std::move(records)) << '\n';
+      output.close();
+      if (output.has_error()) {
+        const std::string message = output.error().message();
+        output.clear_error();
+        throw std::runtime_error("failed while writing JSON: " + message);
+      }
+      if (const auto error =
+              llvm::sys::fs::rename(temporaryPath, outputPath.string()))
+        throw std::runtime_error("could not replace JSON output: " +
+                                 error.message());
+    } catch (...) {
+      llvm::sys::fs::remove(temporaryPath);
+      throw;
+    }
+    llvm::outs() << "WROTE," << outputPath.string() << '\n';
+    return;
+  }
   append = append && fs::is_regular_file(outputPath) &&
            fs::file_size(outputPath) != 0;
   std::ofstream output(
